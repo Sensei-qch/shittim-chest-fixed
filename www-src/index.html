@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>什厅之匣服务</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <header id="hud">
+    <div class="hud-title">
+      <span class="logo">◈</span>
+      <div>
+        <div class="t1">什厅之匣服务</div>
+        <div class="t2">SHITTIM CHEST SERVICE · 终端定位系统</div>
+      </div>
+      <button id="aboutBtn" title="素材来源">ⓘ</button>
+    </div>
+    <div class="hud-stat">
+      <div class="stat"><b id="statOnline">0</b><span>在线</span></div>
+      <div class="stat"><b id="statTotal">0</b><span>在场</span></div>
+    </div>
+  </header>
+
+  <nav id="tabs"><select id="mapSelect" aria-label="选择地图"></select></nav>
+
+  <div id="viewport">
+    <div id="stage">
+      <img id="mapimg" alt="">
+      <div id="pins"></div>
+    </div>
+    <div id="mapname"><b id="mnName"></b><span id="mnSub"></span></div>
+    <div id="zoomHint">双指缩放 · 拖动平移 · 双击放大</div>
+  </div>
+
+  <div id="toolbar">
+    <button class="tb" data-act="fit">全图</button>
+    <button class="tb" data-act="zoomin">＋</button>
+    <button class="tb" data-act="zoomout">－</button>
+    <button class="tb" data-act="respawn">更新</button>
+    <button class="tb toggle" data-act="online">仅在线</button>
+    <button class="tb primary" data-act="list">名录</button>
+    <button class="tb" data-act="arona">阿洛娜</button>
+    <button class="tb" data-act="term">终端</button>
+  </div>
+</div>
+
+<!-- 学生详情 -->
+<div id="sheet" class="hidden">
+  <div id="sheetCard">
+    <div id="sheetHead">
+      <img id="sdPortrait" alt="">
+      <div class="sd-id">
+        <div class="sd-name"><span id="sdName"></span><span id="sdStar" class="stars"></span></div>
+        <div class="sd-sub"><span id="sdSchool" class="tag"></span><span id="sdClub" class="tag"></span></div>
+        <div id="sdState" class="state"></div>
+        <div id="sdLast" class="last"></div>
+      </div>
+      <button id="sdClose">✕</button>
+    </div>
+    <div class="sd-grid" id="sdGrid"></div>
+    <div class="sd-sec">
+      <div class="sec-t">简介</div>
+      <div id="sdProfile" class="profile"></div>
+    </div>
+    <div class="sd-actions">
+      <button id="sdLocate">在地图上定位</button>
+    </div>
+  </div>
+</div>
+
+<!-- 名录 -->
+<div id="listPanel" class="hidden">
+  <div id="listHead">
+    <b id="listTitle">学生名录</b>
+    <div class="lh-right">
+      <input id="listSearch" placeholder="搜索姓名 / 社团">
+      <button id="listClose">✕</button>
+    </div>
+  </div>
+  <div id="listBody"></div>
+</div>
+
+<!-- 素材来源声明 -->
+<div id="about" class="hidden">
+  <div id="aboutCard">
+    <div class="ab-t">素材来源声明</div>
+    <div class="ab-body">
+      <p>本应用为<b>非营利的粉丝自制作品</b>，与 Nexon Games、Yostar 及《蔚蓝档案》官方无关。</p>
+      <ul>
+        <li><b>学院地图</b>：游戏官方鸟瞰图（来自萌娘百科图库）</li>
+        <li><b>学生头像 / 立绘</b>：游戏官方素材（来自 <a href="https://schaledb.com" target="_blank">SchaleDB</a>）</li>
+        <li><b>什亭之匣图标</b>：游戏官方 CG（来自 <a href="https://bluearchive.wiki" target="_blank">Blue Archive Wiki</a>）</li>
+        <li><b>学生档案数据</b>：<a href="https://schaledb.com" target="_blank">SchaleDB</a> 与 <a href="https://kivo.wiki" target="_blank">KivoWiki</a></li>
+      </ul>
+      <p>以上素材版权归原作者及官方所有，仅供学习交流使用，<b>请勿用于商业用途</b>。</p>
+    </div>
+    <button id="aboutOk">同意并继续</button>
+  </div>
+</div>
+
+<!-- 终端 -->
+<div id="terminal" class="hidden">
+  <div id="termHead">
+    <b>◈ 终端 · SHELL</b>
+    <button id="termClose">✕</button>
+  </div>
+  <div id="termOut"></div>
+  <div id="termInputRow">
+    <span id="termPrompt">~ $</span>
+    <input id="termInput" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="输入 help 查看命令">
+  </div>
+</div>
+
+<!-- 阿洛娜 AI 对话 -->
+<div id="arona" class="hidden">
+  <!-- 背景层：半透明毛玻璃 -->
+  <div id="aronaWall"></div>
+  <canvas id="aronaBg"></canvas>
+  <div id="aronaBgHost"></div>
+  <div id="aronaBgVeil"></div>
+  <div id="aronaHead">
+    <img id="aronaAvatar" src="img/arona_avatar.png" alt="阿洛娜">
+    <div class="ar-id">
+      <div class="ar-name">阿洛娜</div>
+      <div class="ar-sub">Shittim Chest · AI Navigator</div>
+    </div>
+    <button id="aronaCfg">⚙</button>
+    <button id="aronaClose">✕</button>
+  </div>
+  <div id="aronaBody"></div>
+  <div id="aronaStatus">阿洛娜正在待命…</div>
+  <div id="aronaInputRow">
+    <input id="aronaInput" autocomplete="off" placeholder="和阿洛娜说点什么…">
+    <button id="aronaSend">发送</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script src="data/data.js"></script>
+<script src="data/masks.js"></script>
+<script src="bg/arona-bg.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

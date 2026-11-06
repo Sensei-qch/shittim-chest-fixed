@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 桌面小组件「输入」用的浮动对话框主题：不进最近任务、自动弹出软键盘 -->
+    <style name="WidgetInputTheme" parent="@android:style/Theme.Material.Light.Dialog">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowBackground">@drawable/widget_dialog_bg</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowMinWidthMajor">88%</item>
+        <item name="android:windowMinWidthMinor">88%</item>
+        <item name="android:colorAccent">#FF2F6FC4</item>
+        <item name="android:textColorPrimary">#FF27435F</item>
+    </style>
+</resources>

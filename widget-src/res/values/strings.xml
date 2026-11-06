@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">什厅之匣服务</string>
+    <string name="widget_map_label">什亭之匣 · 地图</string>
+    <string name="widget_arona_label">什亭之匣 · 阿洛娜对话</string>
+    <string name="widget_term_label">什亭之匣 · 终端</string>
+    <string name="widget_map_desc">桌面显示地图与学生头像 · 无需打开应用 · 可自由调整大小</string>
+    <string name="widget_arona_desc">桌面点「输入」打字对话 · 可翻页查看历史 · 可自由调整大小</string>
+    <string name="widget_term_desc">桌面点「输入」敲任意命令 · 可翻页查看历史输出 · 可自由调整大小</string>
+    <string name="widget_open">打开</string>
+    <string name="widget_input">输入</string>
+    <string name="widget_map_title">地图</string>
+    <string name="widget_arona_title">阿洛娜</string>
+    <string name="widget_term_title">终端</string>
+    <string name="widget_map_default">阿拜多斯</string>
+    <string name="widget_arona_default">老师，今天也辛苦啦~</string>
+    <string name="widget_term_default">$ 点「输入」敲命令</string>
+    <string name="widget_map_hint">在场 0 · 在线 0 · 点按钮切换地图</string>
+    <string name="widget_arona_hint">点右上「输入」打字和阿洛娜对话 →</string>
+    <string name="widget_term_hint">点右上「输入」敲任意命令 · 输出会回到桌面</string>
+    <string name="widget_map_prev_short">‹</string>
+    <string name="widget_map_next_short">›</string>
+    <string name="widget_map_refresh_short">更新</string>
+    <string name="widget_map_list_short">名录</string>
+    <string name="widget_arona_chat_short">说一句</string>
+    <string name="widget_arona_ask_short">提问</string>
+
+    <!-- 历史对话翻页 -->
+    <string name="widget_hist_prev">‹ 更早</string>
+    <string name="widget_hist_next">更新 ›</string>
+    <string name="widget_hist_info">1/1 · 最新</string>
+
+    <!-- 桌面输入对话框 -->
+    <string name="input_arona_title">和阿洛娜说话</string>
+    <string name="input_arona_hint">输入想对阿洛娜说的话…</string>
+    <string name="input_arona_note">发送后会调用已配置的模型接口，阿洛娜的回复会自动显示在桌面小组件上。</string>
+    <string name="input_term_title">输入终端命令</string>
+    <string name="input_term_hint">如 help / ls / map / students</string>
+    <string name="input_term_note">命令会在应用内真实执行，最近几行输出会自动回到桌面小组件。</string>
+    <string name="input_send">发送</string>
+    <string name="input_cancel">取消</string>
+</resources>

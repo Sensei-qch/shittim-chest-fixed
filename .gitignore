@@ -1,0 +1,10 @@
+# 签名密钥（切勿公开）
+chest.jks
+
+# APK 统一发布到 Releases，不进仓库
+*.apk
+
+# 构建中间产物
+*.class
+*.dex
+build/

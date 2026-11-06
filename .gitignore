@@ -4,6 +4,10 @@ chest.jks
 # APK 统一发布到 Releases，不进仓库
 *.apk
 
+# 根目录预览截图与修复报告不进仓库（仅本地留存）
+/*.png
+/修复报告.md
+
 # 构建中间产物
 *.class
 *.dex

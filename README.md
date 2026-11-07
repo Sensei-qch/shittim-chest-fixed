@@ -28,4 +28,4 @@
 
 ## 声明
 
-所有素材归 Nexon、Yostar 及原作者所有，素材版权归各自权利人；如有侵权请联系删除。
+所有素材归 Nexon、Yostar 及原作者所有，素材版权归各自权利人。如涉侵权，请在 [Issues](https://github.com/Sensei-qch/shittim-chest-fixed/issues) 留言告知，我会及时处理。

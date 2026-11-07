@@ -1,20 +1,26 @@
-# 什厅之匣 · Shittim Chest 修复版 v1.25
+# 什厅之匣 · Shittim Chest v1.25
 
-《蔚蓝档案》同人应用的修复版（v1.25），非官方作品，仅供学习交流。
+《蔚蓝档案》同人应用，非官方作品，仅供学习交流。当前为首个版本 v1.25。
 
 ## 功能
 
 - AI 对话：OpenAI 兼容接口、SSE 流式输出、ChatAnywhere 双线路自动切换
 - 学生地图：9 张地图、点位与头像
-- 桌面小组件：地图 / 阿洛娜 / 终端，可自由缩放、桌面输入、历史翻页
-- 半透明毛玻璃界面，地图切换改为下拉菜单
+- 桌面小组件：地图 / 阿洛娜 / 终端，可自由缩放、桌面输入、历史翻页（**实验性功能**）
+- 半透明毛玻璃界面，地图切换使用下拉菜单
+
+## 下载
+
+| v1.25 · APK 发布页 |
+| :--- |
+| [https://github.com/Sensei-qch/shittim-chest-fixed/releases/tag/v1.25](https://github.com/Sensei-qch/shittim-chest-fixed/releases/tag/v1.25) |
+| 桌面小组件为**实验性功能**，不同启动器的显示与缩放可能不一致。 |
 
 ## 安装
 
-- 到 [Releases](../../releases) 下载 `shittim-chest-fixed-v1.25.apk`（约 15.2 MB）；仓库只放源码，不含 APK。
 - Android 8.0+，无 ABI 限制。
-- ⚠️ **先卸载原版**再装：签名证书已更换，覆盖安装会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。
 - 首次使用在「设置」里填自己的 API Key（ChatAnywhere / OpenAI / SiliconFlow 等）；不含任何密钥。
+- 若安装时提示签名冲突，请先卸载设备上同包名的应用。
 
 ## 源码
 

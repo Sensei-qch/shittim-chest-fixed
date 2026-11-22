@@ -559,6 +559,14 @@ imgEl.addEventListener('load',function(){ resetView(true); });
     pr('open <包名>        打开指定外部应用');
     pr('about              查看素材来源声明');
     pr('neofetch           显示系统信息');
+    pr('── 内置 Linux（实验性 · arm64）──','muted');
+    pr('linux status       查看 Linux 环境状态');
+    pr('linux init         首次初始化 Ubuntu rootfs');
+    pr('linux shell        进入 bash 提示（配合下方命令）');
+    pr('apt update         更新软件源（直通真实 apt）');
+    pr('apt install <包>   安装软件（如 apt install vim）');
+    pr('! <命令>           强制用 Linux 执行（如 ! ls -la /etc）');
+    pr('提示：未识别的命令自动交给 Linux bash 执行','muted');
     pr('help               显示本帮助');
     var r=fs()?(jget(fs().info()).root||'手机存储根'):'手机存储根';
     pr('文件根目录：'+r+'（手机内部存储根，可输入 grant 申请所有文件访问权限）','muted'); }
@@ -738,8 +746,105 @@ imgEl.addEventListener('load',function(){ resetView(true); });
     pr('    存储  手机内部存储（可申请所有文件访问）');
   }
 
+  /* ---------- 内置 Linux 环境（proot + Ubuntu，实验性，仅 arm64） ---------- */
+  var linuxBusy=false, linuxReady=false;
+  function linuxStatusSync(){
+    try{ return JSON.parse((window.Android&&window.Android.linuxStatus())||'{}'); }catch(e){ return {}; }
+  }
+  /* 解析 SSE 流：每行 data: {...}，回调每个事件对象 */
+  function sse(url, body, onEvent){
+    return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})
+      .then(function(res){
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        if(!res.body||!res.body.getReader) return res.text().then(function(t){ try{ onEvent(JSON.parse(t)); }catch(e){} });
+        var reader=res.body.getReader(), dec=new TextDecoder(), buf='';
+        function pump(){
+          return reader.read().then(function(r){
+            if(r.done) return;
+            buf+=dec.decode(r.value,{stream:true});
+            var idx;
+            while((idx=buf.indexOf('\n\n'))>=0){
+              var block=buf.slice(0,idx); buf=buf.slice(idx+2);
+              var dl=''; block.split(/\r?\n/).forEach(function(l){ if(l.indexOf('data:')===0) dl+=l.slice(5).trim(); });
+              if(dl){ try{ onEvent(JSON.parse(dl)); }catch(e){} }
+            }
+            return pump();
+          });
+        }
+        return pump();
+      });
+  }
+  function apiLinuxInit(cb){
+    if(linuxBusy){ pr('正在初始化中，请稍候…','muted'); return; }
+    linuxBusy=true;
+    pr('开始初始化 Linux 环境（首次需解压约 27MB，请稍候）…','muted');
+    sse('/api/linux/init',{},function(ev){
+      if(ev.type==='progress'){ pr('  '+ev.text+' ('+ev.percent+'%)','muted'); }
+      else if(ev.type==='done'){ linuxReady=true; linuxBusy=false; pr('✓ '+ev.text,'ok'); if(cb) cb(); }
+      else if(ev.type==='fail'){ linuxBusy=false; pr('✗ '+ev.text,'err'); }
+    }).catch(function(e){ linuxBusy=false; pr('初始化请求失败：'+e.message,'err'); });
+  }
+  /* 在一个新的 proot bash 里执行命令，流式输出 */
+  function apiLinuxExec(command, done){
+    var lineBuf='';
+    function flushLine(){ if(lineBuf){ pr(lineBuf.replace(/\n$/,'')); lineBuf=''; } }
+    sse('/api/linux/exec',{cmd:command},function(ev){
+      if(ev.type==='line'){
+        lineBuf+=ev.text||'';
+        var nl;
+        while((nl=lineBuf.indexOf('\n'))>=0){ pr(lineBuf.slice(0,nl)); lineBuf=lineBuf.slice(nl+1); }
+      } else if(ev.type==='done'){
+        flushLine(); if(ev.code!==0) pr('[退出码 '+ev.code+']','muted');
+        if(done) done(ev.code);
+      }
+    }).catch(function(e){ flushLine(); pr('执行失败：'+e.message,'err'); if(done) done(-1); });
+  }
+  function cmdLinux(args){
+    var sub=(args[0]||'status').toLowerCase();
+    var st=linuxStatusSync(); linuxReady=!!st.ready;
+    if(sub==='status'||sub==='info'){
+      pr('内置 Linux 环境（实验性 · 仅 arm64）','muted');
+      pr('  架构   '+(st.arch||'—')+(st.supported?' ✓':' ✗'));
+      pr('  状态   '+(st.ready?'已就绪':(st.initializing?'初始化中':'未初始化')));
+      if(st.error) pr('  错误   '+st.error,'err');
+      pr('  根fs   '+(st.rootfsPath||'—'));
+      pr('用法：linux init 初始化 · linux shell 进入 bash · apt 安装软件','muted');
+      return;
+    }
+    if(sub==='init'){ apiLinuxInit(); return; }
+    if(sub==='shell'||sub==='bash'||sub==='sh'){
+      if(!st.ready){ pr('环境未就绪，先执行：linux init','err'); return; }
+      pr('进入 Linux bash（输入 exit 返回；apt install 可安装软件）','muted');
+      return;
+    }
+    pr('linux: 未知子命令（status/init/shell）','err');
+  }
+  /* 判断是否应交给真实 Linux shell */
+  function isLinuxCommand(cmd){
+    return cmd==='apt'||cmd==='apt-get'||cmd==='dpkg'||cmd==='sh'||cmd==='bash'||
+           cmd==='uname'||cmd==='lsb_release'||cmd==='sudo'||cmd==='su'||
+           cmd==='wget'||cmd==='curl'||cmd==='python3'||cmd==='python'||cmd==='pip3'||
+           cmd==='git'||cmd==='gcc'||cmd==='make'||cmd==='ps'||cmd==='top';
+  }
+  function runLinuxLine(line){
+    var st=linuxStatusSync();
+    if(!st.ready){
+      pr('Linux 环境尚未就绪。','err');
+      pr('先执行 linux init 初始化（首次约需 1-2 分钟）。','muted');
+      return;
+    }
+    apiLinuxExec(line);
+  }
+
   function run(line){
     line=line.trim(); if(!line){ return; }
+    /* `!` 前缀：强制交给内置 Linux shell（用于 ls/cat 等同名内建命令的 GNU 版本）*/
+    if(line.charAt(0)==='!'){
+      var lcmd=line.slice(1).trim();
+      logTerm(prompt()+line); pr(prompt()+line,'cmd'); hist.push(line); hi=hist.length;
+      if(lcmd) runLinuxLine(lcmd);
+      return;
+    }
     logTerm(prompt()+line);            /* 命令本身进历史 */
     pr(prompt()+line,'cmd'); hist.push(line); hi=hist.length;
     var gi=line.indexOf('>>'), si=line.indexOf('>'), redir=null, append=false, code=line;
@@ -790,7 +895,11 @@ imgEl.addEventListener('load',function(){ resetView(true); });
       case 'wc': cmdWc(args); break;
       case 'rename': cmdRename(args); break;
       case 'neofetch': cmdNeofetch(); break;
-      default: pr(cmd+': 未找到命令（输入 help 查看可用命令）','err');
+      case 'linux': cmdLinux(args); break;
+      default:
+        /* 统一终端：内置命令未匹配的，全部交给内置 Linux shell 执行。
+           这样 apt / 系统命令 / 未知程序都走真实 proot 环境。 */
+        runLinuxLine(line);
     }
   }
 
@@ -801,7 +910,21 @@ imgEl.addEventListener('load',function(){ resetView(true); });
   });
   var termEl=$('terminal');
   $('termClose').addEventListener('click',function(){ termEl.classList.add('hidden'); termEl.style.display='none'; if(window.Android) window.Android.setModal(false); });
-  window.__openTerm=function(){ termEl.classList.remove('hidden'); termEl.style.display='flex'; setRoot(''); if(window.Android) window.Android.setModal(true); setTimeout(function(){ inp.focus(); },50); };
+  window.__openTerm=function(){
+    termEl.classList.remove('hidden'); termEl.style.display='flex'; setRoot('');
+    if(window.Android) window.Android.setModal(true);
+    setTimeout(function(){
+      inp.focus();
+      /* 首次打开提示 Linux 环境状态（不打断历史输出） */
+      if(!window.__linuxGreeted){
+        window.__linuxGreeted=true;
+        var st=linuxStatusSync();
+        if(st.supported && !st.ready){
+          pr('检测到内置 Linux 环境（实验性）。输入 linux init 初始化后可 apt 装软件。','muted');
+        }
+      }
+    },50);
+  };
   /* 桌面小组件「终端」快捷命令入口 */
   window.__termRun=function(c){ run(String(c||'')); };
   /* 打开应用时恢复历史输出；只有第一次使用才写欢迎信息 */

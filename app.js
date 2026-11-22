@@ -491,7 +491,11 @@ imgEl.addEventListener('load',function(){ resetView(true); });
     /* 命令回显由 run() 记录，避免与桌面输入弹窗写入的记录重复 */
     if(cls!=='cmd') logTerm(s);
     if(window.__widgetPush) window.__widgetPush({term:s,termTail:termTail.slice()}); }
-  function prompt(){ return (root?('/'+root):'~')+' $'; }
+  /* Termux 风格提示符：普通用户以 $ 结尾并留一个空格；cd 到子目录显示 basename */
+  function prompt(){
+    var d = root ? root.split('/').filter(Boolean).pop() : '~';
+    return (d||'~')+' $ ';
+  }
   function setRoot(p){ root=p; promptEl.textContent=prompt(); }
   function norm(p){ var parts=String(p||'').split('/'); var st=[];
     for(var i=0;i<parts.length;i++){ var x=parts[i]; if(x===''||x==='.') continue; if(x==='..'){ if(st.length) st.pop(); } else st.push(x); } return st.join('/'); }
@@ -562,11 +566,11 @@ imgEl.addEventListener('load',function(){ resetView(true); });
     pr('── 内置 Linux（实验性 · arm64）──','muted');
     pr('linux status       查看 Linux 环境状态');
     pr('linux init         首次初始化 Ubuntu rootfs');
-    pr('linux shell        进入 bash 提示（配合下方命令）');
+    pr('linux shell        提示已进入 bash（本终端语法与 Termux 相同）');
     pr('apt update         更新软件源（直通真实 apt）');
     pr('apt install <包>   安装软件（如 apt install vim）');
     pr('! <命令>           强制用 Linux 执行（如 ! ls -la /etc）');
-    pr('提示：未识别的命令自动交给 Linux bash 执行','muted');
+    pr('提示：提示符 $ 后输入即可，未识别命令自动交给 Linux bash（同 Termux）','muted');
     pr('help               显示本帮助');
     var r=fs()?(jget(fs().info()).root||'手机存储根'):'手机存储根';
     pr('文件根目录：'+r+'（手机内部存储根，可输入 grant 申请所有文件访问权限）','muted'); }

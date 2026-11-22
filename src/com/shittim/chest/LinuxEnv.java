@@ -1,6 +1,8 @@
 package com.shittim.chest;
 
 import android.content.Context;
+import android.system.Os;
+import android.system.StructStat;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -27,20 +29,35 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   native/lib/libtalloc.so.2, ...        —— proot 的动态依赖
  *   ubuntu/                               —— 解压后的 Ubuntu rootfs
  *   ready                                 —— 初始化完成标记
+ *
+ * 执行权限兜底：部分设备把应用私有目录挂载为 noexec，导致 execve(proot) 返回
+ * error=13。此时改用系统保证可执行的 nativeLibraryDir（lib/arm64-v8a 解压目录）
+ * 里的同款二进制，并通过符号链接让动态链接器按 soname 找到依赖库。
  */
 public final class LinuxEnv {
 
     private static final String TAG = "LinuxEnv";
+
+    /* 打包进 lib/arm64-v8a/ 的兜底二进制（Android 只解压 lib*.so） */
+    private static final String LIB_PROOT  = "libproot.so";
+    private static final String LIB_LOADER = "libprootldr.so";
+    private static final String LIB_TALLOC = "libtalloc2.so";
+    private static final String LIB_SHMEM  = "libshmem.so";
+
     private final Context ctx;
     private final File base;          // files/shittim
     private final File binDir;        // files/shittim/native/bin
     private final File libDir;        // files/shittim/native/lib
     private final File rootfs;        // files/shittim/ubuntu
     private final File readyFlag;
+    private final File nativeLibDir;  // /data/app/<pkg>/lib/<abi> —— 系统保证可执行
 
     private final AtomicBoolean initializing = new AtomicBoolean(false);
     private volatile boolean ready = false;
     private volatile String lastError = null;
+    /* files 目录里的二进制是否真正可执行；false = 走 nativeLibraryDir 兜底 */
+    private volatile boolean binExecOk = false;
+    private volatile String execMode = "未就绪";
 
     /** 记录活跃 shell 进程，便于销毁时清理。 */
     private final Map<Integer, Process> processes = new ConcurrentHashMap<>();
@@ -54,6 +71,8 @@ public final class LinuxEnv {
         libDir = new File(base, "native/lib");
         rootfs = new File(base, "ubuntu");
         readyFlag = new File(base, "ready");
+        String nld = ctx.getApplicationInfo().nativeLibraryDir;
+        nativeLibDir = new File(nld == null ? "/data/app" : nld);
     }
 
     /** 当前是否已完全就绪。 */
@@ -73,6 +92,9 @@ public final class LinuxEnv {
         sb.append(",\"ready\":").append(ready);
         sb.append(",\"initializing\":").append(initializing.get());
         sb.append(",\"rootfsPath\":").append(org.json.JSONObject.quote(rootfs.getAbsolutePath()));
+        sb.append(",\"binExec\":").append(binExecOk);
+        sb.append(",\"execMode\":").append(org.json.JSONObject.quote(execMode));
+        sb.append(",\"nativeLibDir\":").append(org.json.JSONObject.quote(nativeLibDir.getAbsolutePath()));
         sb.append(",\"error\":").append(org.json.JSONObject.quote(lastError == null ? "" : lastError));
         sb.append("}");
         return sb.toString();
@@ -81,6 +103,32 @@ public final class LinuxEnv {
     public static boolean isArm64() {
         for (String a : android.os.Build.SUPPORTED_ABIS) if ("arm64-v8a".equals(a)) return true;
         return false;
+    }
+
+    /**
+     * 用 Os.chmod 强制设置 0755，再用 Os.stat 校验执行位确实生效。
+     * 比 File.setExecutable 更可靠，且能检测「静默失败」。
+     */
+    private boolean forceExec(File f) {
+        if (f == null || !f.exists()) return false;
+        try {
+            Os.chmod(f.getAbsolutePath(), 0755);
+            StructStat st = Os.stat(f.getAbsolutePath());
+            return (st.st_mode & 0111) != 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 只检查执行位，不改权限（用于系统 nativeLibraryDir）。 */
+    private boolean canExec(File f) {
+        if (f == null || !f.exists()) return false;
+        try {
+            StructStat st = Os.stat(f.getAbsolutePath());
+            return (st.st_mode & 0111) != 0;
+        } catch (Throwable t) {
+            return f.canExecute();
+        }
     }
 
     /**
@@ -117,6 +165,27 @@ public final class LinuxEnv {
                         extractTarGz("linux/ubuntu-base-arm64.tar.gz", rootfs, cb);
                     }
 
+                    if (cb != null) cb.onProgress("校验执行权限…", 85);
+                    File prootF = new File(binDir, "proot");
+                    File loaderF = new File(binDir, "loader");
+                    binExecOk = forceExec(prootF) && forceExec(loaderF);
+
+                    if (!binExecOk) {
+                        /* 应用私有目录禁止执行 —— 改用系统保证可执行的 nativeLibraryDir */
+                        File np = new File(nativeLibDir, LIB_PROOT);
+                        File nl = new File(nativeLibDir, LIB_LOADER);
+                        if (!np.exists() || !nl.exists()) {
+                            throw new Exception("应用私有目录禁止执行，且内置可执行文件缺失，无法启动 Linux 环境");
+                        }
+                        if (!canExec(np) || !canExec(nl)) {
+                            forceExec(np); forceExec(nl);
+                        }
+                        setupLibLinks();
+                        execMode = "nativeLib";
+                    } else {
+                        execMode = "files";
+                    }
+
                     if (cb != null) cb.onProgress("配置 apt 源与 DNS…", 88);
                     writeAptSources();
                     writeResolv();
@@ -138,9 +207,30 @@ public final class LinuxEnv {
         }, "linuxenv-init").start();
     }
 
+    /**
+     * 当应用私有目录 noexec 时，为动态链接器建立 soname → nativeLibraryDir 的符号链接。
+     * 链接文件本身位于 noexec 目录无妨；linker 最终 mmap 的目标在 nativeLibraryDir（可执行）。
+     */
+    private void setupLibLinks() {
+        linkLib("libtalloc.so.2", LIB_TALLOC);
+        linkLib("libandroid-shmem.so", LIB_SHMEM);
+    }
+
+    private void linkLib(String soname, String nativeName) {
+        try {
+            File src = new File(nativeLibDir, nativeName);
+            if (!src.exists()) return;   // 无 native 库时保留解压版
+            File dst = new File(libDir, soname);
+            if (dst.exists() && !dst.delete()) return;
+            Os.symlink(src.getAbsolutePath(), dst.getAbsolutePath());
+        } catch (Throwable t) {
+            /* 保留解压版依赖库 */
+        }
+    }
+
     private void extractAsset(String asset, File dst, boolean executable) throws Exception {
         if (dst.exists() && dst.length() > 0) {
-            if (executable) dst.setExecutable(true, false);
+            if (executable) forceExec(dst);
             return;
         }
         File parent = dst.getParentFile();
@@ -152,7 +242,7 @@ public final class LinuxEnv {
         while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
         out.close();
         in.close();
-        if (executable) dst.setExecutable(true, false);
+        if (executable) forceExec(dst);
     }
 
     /** 用 proot 自身之外的系统工具解压：Android 无 tar，故用内置 busybox 风格 shell 命令不可行。
@@ -195,7 +285,7 @@ public final class LinuxEnv {
                 out.close();
                 // 保留可执行位（ustar mode 的 owner exec bits）
                 long mode = octal(header, 100, 8);
-                if ((mode & 0111) != 0) f.setExecutable(true, false);
+                if ((mode & 0111) != 0) forceExec(f);
             }
             long blocks = ((size + 511) / 512) * 512;
             skipFully(gz, blocks - size);
@@ -290,9 +380,16 @@ public final class LinuxEnv {
         }
         if (command == null || command.trim().length() == 0) return 0;
 
+        /* 执行前自愈：每次都重新校验/修复执行位，应对升级或重启后权限丢失 */
+        forceExec(new File(binDir, "proot"));
+        forceExec(new File(binDir, "loader"));
+
+        final File proot = binExecOk ? new File(binDir, "proot") : new File(nativeLibDir, LIB_PROOT);
+        final File loader = binExecOk ? new File(binDir, "loader") : new File(nativeLibDir, LIB_LOADER);
+
         final long id = ++seq;
         List<String> cmd = new ArrayList<String>();
-        cmd.add(new File(binDir, "proot").getAbsolutePath());
+        cmd.add(proot.getAbsolutePath());
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-0");                       // 伪装 root（apt 需要）
         cmd.add("-b"); cmd.add("/dev");
@@ -303,12 +400,12 @@ public final class LinuxEnv {
         cmd.add("/bin/bash"); cmd.add("-lc");
         // 每条命令都先 source 环境脚本
         cmd.add(". /etc/shittim/env.sh 2>/dev/null; " +
-                "export PROOT_LOADER='" + new File(binDir, "loader").getAbsolutePath() + "'; " + command);
+                "export PROOT_LOADER='" + loader.getAbsolutePath() + "'; " + command);
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         Map<String, String> env = pb.environment();
-        env.put("PROOT_LOADER", new File(binDir, "loader").getAbsolutePath());
-        env.put("LD_LIBRARY_PATH", libDir.getAbsolutePath());
+        env.put("PROOT_LOADER", loader.getAbsolutePath());
+        env.put("LD_LIBRARY_PATH", libDir.getAbsolutePath() + ":" + nativeLibDir.getAbsolutePath());
         env.put("PATH", System.getenv("PATH"));
         env.put("TMPDIR", new File(base, "tmp").getAbsolutePath());
         new File(base, "tmp").mkdirs();
@@ -337,7 +434,13 @@ public final class LinuxEnv {
             return code;
         } catch (Throwable t) {
             processes.remove((int) id);
-            if (cb != null) cb.onLine("[错误] 无法启动 proot：" + (t.getMessage() == null ? t.toString() : t.getMessage()) + "\n");
+            String m = t.getMessage() == null ? t.toString() : t.getMessage();
+            String hint = "";
+            if (m.contains("Permission denied") || m.contains("error=13")) {
+                hint = "（执行权限被拒绝：已尝试强制 chmod 与系统目录兜底，" +
+                       "该设备可能限制了应用内代码执行；请升级后重试 linux init）";
+            }
+            if (cb != null) cb.onLine("[错误] 无法启动 proot：" + m + hint + "\n");
             return -1;
         }
     }

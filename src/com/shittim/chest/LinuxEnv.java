@@ -378,8 +378,6 @@ public final class LinuxEnv {
             if (cb != null) cb.onLine("[错误] Linux 环境未就绪：" + (lastError == null ? "请等待初始化" : lastError) + "\n");
             return -1;
         }
-        if (command == null || command.trim().length() == 0) return 0;
-
         /* 执行前自愈：每次都重新校验/修复执行位，应对升级或重启后权限丢失 */
         forceExec(new File(binDir, "proot"));
         forceExec(new File(binDir, "loader"));
@@ -398,9 +396,20 @@ public final class LinuxEnv {
         cmd.add("-b"); cmd.add("/sdcard:/sdcard");
         cmd.add("-w"); cmd.add("/root");
         cmd.add("/bin/bash"); cmd.add("-lc");
-        // 每条命令都先 source 环境脚本
-        cmd.add(". /etc/shittim/env.sh 2>/dev/null; " +
-                "export PROOT_LOADER='" + loader.getAbsolutePath() + "'; " + command);
+        /* 每条命令：source 环境 → 恢复上次工作目录 → 用户命令 → 保存工作目录 → 输出真实 PS1。
+         * PS1 用 \001P: 前缀标记，Java 读取线程识别后经 onPrompt 回传，前端不作为普通输出显示。
+         * 这样提示符严格等于系统 bash 的 PS1（root 为 #，cd 会改变路径）。 */
+        String script = ". /etc/shittim/env.sh 2>/dev/null; " +
+                "export PROOT_LOADER='" + loader.getAbsolutePath() + "'; " +
+                "[ -f /etc/shittim/cwd ] && cd \"$(cat /etc/shittim/cwd 2>/dev/null)\" 2>/dev/null; " +
+                command + "; " +
+                "__shittim_rc=$?; " +
+                "pwd > /etc/shittim/cwd 2>/dev/null; " +
+                "printf '\\001P:%s@%s:%s%s \\n' " +
+                "\"$(whoami)\" \"$(hostname)\" \"${PWD/$HOME/~}\" " +
+                "\"$([ $(id -u) = 0 ] && echo '#' || echo '$')\"; " +
+                "exit $__shittim_rc";
+        cmd.add(script);
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         Map<String, String> env = pb.environment();
@@ -421,7 +430,10 @@ public final class LinuxEnv {
                     String line;
                     try {
                         while ((line = br.readLine()) != null) {
-                            if (cb != null) cb.onLine(line + "\n");
+                            if (line.startsWith("\u0001P:")) {
+                                // 提示符标记行：回传真实 PS1，不作为普通输出回显
+                                if (cb != null) cb.onPrompt(line.substring(3));
+                            } else if (cb != null) cb.onLine(line + "\n");
                         }
                     } catch (Exception ignored) {
                     } finally {
@@ -460,5 +472,7 @@ public final class LinuxEnv {
 
     public interface ExecCb {
         void onLine(String line);
+        /** 收到 bash 真实生成的提示符（user@host:path#），可覆盖 UI 提示符。 */
+        void onPrompt(String prompt);
     }
 }

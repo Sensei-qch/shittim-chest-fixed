@@ -158,8 +158,14 @@ public final class LinuxEnv {
             cmd.add("--version");
             ProcessBuilder pb = new ProcessBuilder(cmd);
             Map<String, String> env = pb.environment();
+            File probeTmp = new File(base, "tmp");
+            probeTmp.mkdirs();
+            env.put("PROOT_TMP_DIR", probeTmp.getAbsolutePath());
+            env.put("TMPDIR", probeTmp.getAbsolutePath());
             env.put("LD_LIBRARY_PATH", libDir.getAbsolutePath() + ":" + nativeLibDir.getAbsolutePath());
             env.put("PROOT_LOADER", new File(binDir, "loader").getAbsolutePath());
+            String php = System.getenv("PATH");
+            env.put("PATH", (php == null || php.length() == 0) ? "/system/bin:/system/xbin" : php);
             pb.redirectErrorStream(true);
             p = pb.start();
             BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
@@ -499,11 +505,20 @@ public final class LinuxEnv {
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         Map<String, String> env = pb.environment();
+        // 可写临时目录：proot 编译时默认指向 Termux 的 /data/data/com.termux/files/usr/tmp/，
+        // 在本应用不存在，会导致 "can't create glue roots" 进而 /bin/bash not found。
+        File tmpDir = new File(base, "tmp");
+        tmpDir.mkdirs();
+        String tmpPath = tmpDir.getAbsolutePath();
+        env.put("PROOT_TMP_DIR", tmpPath);          // 关键：proot 创建 glue roots 用
+        env.put("TMPDIR", tmpPath);
         env.put("PROOT_LOADER", loader.getAbsolutePath());
         env.put("LD_LIBRARY_PATH", libDir.getAbsolutePath() + ":" + nativeLibDir.getAbsolutePath());
-        env.put("PATH", System.getenv("PATH"));
-        env.put("TMPDIR", new File(base, "tmp").getAbsolutePath());
-        new File(base, "tmp").mkdirs();
+        // Android 的 System.getenv("PATH") 常为 null；给宿主进程一个明确 PATH，
+        // guest 内 PATH 由 env.sh 覆盖为 GNU 标准路径，避免 $PATH=(null)。
+        String hostPath = System.getenv("PATH");
+        env.put("PATH", (hostPath == null || hostPath.length() == 0)
+                ? "/system/bin:/system/xbin:/vendor/bin" : hostPath);
         pb.redirectErrorStream(true);
 
         try {

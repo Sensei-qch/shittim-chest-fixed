@@ -12,3 +12,6 @@ chest.jks
 *.class
 *.dex
 build/
+
+# 签名中间文件
+*.idsig

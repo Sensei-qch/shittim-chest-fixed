@@ -290,6 +290,15 @@ public class HttpServer implements Runnable {
                         out.flush();
                     } catch (Exception ignored) { }
                 }
+                @Override public void onPrompt(String prompt) {
+                    try {
+                        JSONObject o = new JSONObject();
+                        o.put("type", "prompt");
+                        o.put("text", prompt);
+                        sseLine(out, "data: " + o.toString() + "\n\n");
+                        out.flush();
+                    } catch (Exception ignored) { }
+                }
             });
             JSONObject done = new JSONObject();
             done.put("type", "done");

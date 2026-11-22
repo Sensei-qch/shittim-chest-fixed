@@ -46,6 +46,9 @@ public class MainActivity extends Activity {
     private WebView web;
     private boolean modal = false;
     private HttpServer httpd;
+    private LinuxEnv mLinuxEnv;
+    /** 供 HttpServer 获取 Linux 环境引擎。 */
+    LinuxEnv linuxEnv() { return mLinuxEnv; }
     /** 桌面小组件点击后待打开的面板（map / arona / term）。 */
     private String pendingWidgetOpen = null;
     /** 当前存活的主界面，供桌面小组件按钮直接派发动作；进程被回收时为 null。 */
@@ -138,6 +141,7 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "Android");
         web.addJavascriptInterface(new FSBridge(this, this, getFilesDir()), "AndroidFS");
 
+        mLinuxEnv = new LinuxEnv(this);
         int port = startHttpd();
         if (port > 0) {
             web.loadUrl("http://127.0.0.1:" + port + "/index.html");
@@ -244,6 +248,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         if (active == this) active = null;
+        if (mLinuxEnv != null) mLinuxEnv.killAll();
     }
 
     @Override
@@ -287,6 +292,22 @@ public class MainActivity extends Activity {
         public void setWidgetData(String json) {
             try { WidgetHelper.save(MainActivity.this, json); }
             catch (Exception ignored) { }
+        }
+
+        /** 同步获取 Linux 环境状态 JSON（供前端首屏判断）。 */
+        @JavascriptInterface
+        public String linuxStatus() {
+            return mLinuxEnv == null ? "{\"ready\":false,\"supported\":false}" : mLinuxEnv.status();
+        }
+
+        /** 请求初始化 Linux 环境（真正进度通过 /api/linux/init 的 SSE 推送）。 */
+        @JavascriptInterface
+        public void linuxInit() {
+            if (mLinuxEnv == null) return;
+            mLinuxEnv.init(new LinuxEnv.Progress() {
+                @Override public void onProgress(String text, int percent) { }
+                @Override public void onFail(String reason) { }
+            });
         }
 
         @JavascriptInterface

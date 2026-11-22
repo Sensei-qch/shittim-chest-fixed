@@ -463,14 +463,12 @@ imgEl.addEventListener('load',function(){ resetView(true); });
   if(seen!=='1') show();   /* 之后不再自动弹出，点 ⓘ 仍可查看 */
 })();
 
-/* ===== 终端（类 Linux 文件管理 + 自定义命令） ===== */
+/* ===== 终端：单一 Linux 终端（proot + Ubuntu，进入即自动启用） ===== */
 (function(){
   function $(id){ return document.getElementById(id); }
   var out=$('termOut'), inp=$('termInput'), promptEl=$('termPrompt');
-  var root='', hist=[], hi=0;
-  function fs(){ return window.AndroidFS; }
+  var hist=[], hi=0;
   var termTail=[];
-  /* 终端历史：应用内 localStorage 持久化 + 追加推送给桌面小组件 */
   var TLOG='shittim_term_log';
   function readTlog(){ try{ return JSON.parse(localStorage.getItem(TLOG)||'[]'); }catch(e){ return []; } }
   function logTerm(s){
@@ -488,274 +486,18 @@ imgEl.addEventListener('load',function(){ resetView(true); });
   }
   function pr(s,cls){ s=String(s); var d=document.createElement('div'); if(cls) d.className=cls; d.textContent=s; out.appendChild(d); out.scrollTop=out.scrollHeight;
     termTail.push(s); if(termTail.length>6) termTail.shift();
-    /* 命令回显由 run() 记录，避免与桌面输入弹窗写入的记录重复 */
     if(cls!=='cmd') logTerm(s);
     if(window.__widgetPush) window.__widgetPush({term:s,termTail:termTail.slice()}); }
-  /* Termux 风格提示符：普通用户以 $ 结尾并留一个空格；cd 到子目录显示 basename */
-  function prompt(){
-    var d = root ? root.split('/').filter(Boolean).pop() : '~';
-    return (d||'~')+' $ ';
-  }
-  function setRoot(p){ root=p; promptEl.textContent=prompt(); }
-  function norm(p){ var parts=String(p||'').split('/'); var st=[];
-    for(var i=0;i<parts.length;i++){ var x=parts[i]; if(x===''||x==='.') continue; if(x==='..'){ if(st.length) st.pop(); } else st.push(x); } return st.join('/'); }
-  function resolve(p){ if(!p) return root; if(p.charAt(0)==='/') return norm(p.slice(1)); return norm(root?(root+'/'+p):p); }
-  function jget(r){ try{ return JSON.parse(r); }catch(e){ return {ok:false,msg:String(r)}; } }
-  function readForAppend(p){ var j=jget(fs().read(p)); if(j.ok) return j.text; return ''; }
+  /* 提示符：严格使用后端 bash 真实展开的 PS1（\u@\h:\w$ ） */
+  var curPrompt='~ $ ';
+  function prompt(){ return curPrompt; }
+  function setPrompt(){ if(promptEl) promptEl.textContent=prompt(); }
 
-  function tokenize(s){ var o=[], cur='', q=false, i=0;
-    while(i<s.length){ var c=s.charAt(i);
-      if(q){ if(c==='"') q=false; else cur+=c; }
-      else if(c==='"') q=true;
-      else if(c===' '||c==='\t'){ if(cur){o.push(cur);cur='';} }
-      else cur+=c; i++; }
-    if(cur) o.push(cur); return o; }
-
-  function cmdLs(args){ var longf=false; if(args[0]==='-l'){ longf=true; args=args.slice(1); }
-    var j=jget(fs().ls(resolve(args[0]||''))); if(!j.ok){ pr('ls: '+j.msg,'err'); return; }
-    var it=(j.items||[]).slice().sort(function(a,b){ if(a.t!==b.t) return a.t==='dir'?-1:1; return a.n<b.n?-1:1; });
-    if(!it.length){ pr('（空目录）','muted'); return; }
-    for(var i=0;i<it.length;i++){ var x=it[i];
-      if(longf) pr((x.t==='dir'?'d':'-')+'  '+x.s+'  '+x.n+(x.t==='dir'?'/':''), x.t==='dir'?'dir':'ok');
-      else pr(x.n+(x.t==='dir'?'/':''), x.t==='dir'?'dir':'ok'); } }
-  function cmdCd(args){ if(!args.length){ setRoot(''); return; } var p=resolve(args[0]);
-    var j=jget(fs().exists(p)); if(!j.ok||j.t!=='dir'){ pr('cd: 不是目录: '+args[0],'err'); return; } setRoot(p); }
-  function cmdCat(args){ if(!args.length){ pr('cat: 缺少文件','err'); return; }
-    var j=jget(fs().read(resolve(args[0]))); if(!j.ok){ pr('cat: '+j.msg,'err'); return; } pr(j.text); }
-  function cmdSimple(name,args,fn){ if(!args.length){ pr(name+': 缺少参数','err'); return; }
-    var j=jget(fn(args[0])); if(!j.ok) pr(name+': '+j.msg,'err'); else pr(name+' 完成','ok'); }
-  function cmdVersion(){ var v='1.0'; if(fs()){ var j=jget(fs().info()); if(j.ok) v=j.version; } pr('什厅之匣服务 v'+v); }
-  function cmdStudents(args){ if(!window.SC){ pr('暂不可用','err'); return; }
-    var gs=SC.groupsHere(), n=args.length?parseInt(args[0],10):gs.length;
-    if(isNaN(n)) n=gs.length; n=Math.min(n,gs.length); var c=0;
-    for(var i=0;i<gs.length&&c<n;i++){ var g=gs[i], fn=SC.formName(g);
-      pr((c+1)+'. '+g.name+(fn&&fn!==g.name?(' ('+fn+')'):'')); c++; }
-    pr('共 '+gs.length+' 名学生在当前地图','muted'); }
-  function cmdHelp(){ pr('什厅之匣服务 · 终端（类 Linux 语法）','muted');
-    pr('ls [-l] [路径]     列出目录');
-    pr('cd [路径]          切换目录');
-    pr('pwd                当前目录');
-    pr('cat <文件>         查看文本');
-    pr('echo <文本>        输出（支持 > 和 >> 重定向到文件）');
-    pr('mkdir <目录>       创建目录');
-    pr('touch <文件>       新建空文件');
-    pr('rm [-r] <路径>     删除（目录需 -r）');
-    pr('mv <源> <目标>     移动');
-    pr('cp <源> <目标>     复制');
-    pr('rename <旧> <新>   重命名（即 mv）');
-    pr('tree [-L n] [路径] 树形列出目录');
-    pr('find <名> [路径]   递归查找文件');
-    pr('du [路径]          统计占用大小');
-    pr('grep <模式> <文件> 在文件内容中搜索');
-    pr('head [-n N] <文件> 查看文件头部');
-    pr('tail [-n N] <文件> 查看文件尾部');
-    pr('wc <文件>          统计行/词/字节');
-    pr('grant              请求「所有文件访问」权限');
-    pr('ai                 配置阿洛娜（ai bg/ca/github/set/test/panel）');
-    pr('ai bg              半透明毛玻璃背景开关（static/off）');
-    pr('whoami             当前用户');
-    pr('date               日期时间');
-    pr('version            版本信息');
-    pr('clear              清屏');
-    pr('map                显示当前地图');
-    pr('students [数量]    列出当前地图学生');
-    pr('momotalk           打开蔚蓝档案（MomoTalk）');
-    pr('open <包名>        打开指定外部应用');
-    pr('about              查看素材来源声明');
-    pr('neofetch           显示系统信息');
-    pr('── 内置 Linux（实验性 · arm64）──','muted');
-    pr('linux status       查看 Linux 环境状态');
-    pr('linux init         首次初始化 Ubuntu rootfs');
-    pr('linux shell        提示已进入 bash（本终端语法与 Termux 相同）');
-    pr('apt update         更新软件源（直通真实 apt）');
-    pr('apt install <包>   安装软件（如 apt install vim）');
-    pr('! <命令>           强制用 Linux 执行（如 ! ls -la /etc）');
-    pr('提示：提示符 $ 后输入即可，未识别命令自动交给 Linux bash（同 Termux）','muted');
-    pr('help               显示本帮助');
-    var r=fs()?(jget(fs().info()).root||'手机存储根'):'手机存储根';
-    pr('文件根目录：'+r+'（手机内部存储根，可输入 grant 申请所有文件访问权限）','muted'); }
-
-  /* ---------- ai 命令：配置阿洛娜的模型接口 ---------- */
-  function readApi(){ try{ return JSON.parse(localStorage.getItem('arona_api')||'null'); }catch(e){ return null; } }
-  function cmdAi(args){
-    var GH='https://models.github.ai/inference/v1';
-    var CA1='https://api.chatanywhere.tech/v1', CA2='https://api.chatanywhere.org/v1';
-    var sub=args[0];
-    if(!sub||sub==='status'){
-      var cfg=readApi();
-      if(cfg&&cfg.url){
-        pr('当前模式：外部模型接口（在线推理）');
-        pr('  接口：'+cfg.url); pr('  模型：'+cfg.model);
-        pr('  备用：'+(cfg.alt||'（无）'));
-        pr('  密钥：'+(cfg.key?cfg.key.slice(0,6)+'****':'（未设置）'));
-      }else pr('尚未配置模型接口，阿洛娜无法回答。推荐：ai ca <你的ChatAnywhere密钥>','muted');
-      pr('用法：','muted');
-      pr('  ai panel                           打开图形化配置面板');
-      pr('  ai ca <密钥> [模型名]                一键接入 ChatAnywhere 免费 API（双线路自动切换）');
-      pr('  ai github <令牌> [模型名]            一键接入 GitHub Models（免费额度 · 国内易被拦截）');
-      pr('  ai set <接口地址> <密钥> <模型名>     配置任意 OpenAI 兼容接口');
-      pr('  ai test                            测试当前接口连通性');
-      pr('  ai clear                           清除接口配置');
-      pr('  ai bg [static|off]                 半透明毛玻璃背景开关（status 查看状态）');
-      pr('示例：ai ca sk-xxxxxxxx','muted');
-      return;
-    }
-    if(sub==='bg'){
-      var want=args[1]||'';
-      if(!want||want==='status'){
-        var s=(window.AronaBG&&window.AronaBG.status())||{name:'?',want:'?',note:'引擎未加载'};
-        pr('背景：当前 '+s.name+'（设定 '+(s.want||s.name)+'）· '+
-           (s.name==='static'?'半透明无色毛玻璃（无图片 / 无动画）':(s.running?'运行中':'已暂停')),'ok');
-        pr('  '+(s.note||''),'muted');
-        pr('用法：ai bg static | off | status','muted');
-        return;
-      }
-      if(!window.AronaBG){ pr('背景引擎未加载','err'); return; }
-      if(['static','off','canvas','spine','live2d'].indexOf(want)<0){ pr('可选：static / off','err'); return; }
-      Promise.resolve(window.AronaBG.use(want)).then(function(r){
-        pr('背景：'+r.name+' · '+(r.note||''),'ok');
-      });
-      return;
-    }
-    if(sub==='panel'){
-      if(window.__openAronaCfg) window.__openAronaCfg();
-      else pr('配置面板尚未就绪，请先点一次底部「阿洛娜」按钮','err');
-      return;
-    }
-    if(sub==='ca'||sub==='chatanywhere'){
-      if(args.length<2){ pr('用法：ai ca <API Key> [模型名]','err'); return; }
-      var cm=args[2]||'gpt-4o-mini';
-      localStorage.setItem('arona_api',JSON.stringify({url:CA1,alt:CA2,key:args[1],model:cm,proxy:''}));
-      pr('已接入 ChatAnywhere（'+cm+'）· 国内/国外双线路自动切换','ok');
-      pr('免费 Key 获取：注册 chatanywhere.tech 并绑定 GitHub（与 MomoTalk 同款方案）','muted');
-      pr('输入 ai test 可测试连通性','muted');
-      return;
-    }
-    if(sub==='github'){
-      if(args.length<2){ pr('用法：ai github <GitHub令牌> [模型名]','err'); return; }
-      var gm=args[2]||'openai/gpt-4o-mini';
-      localStorage.setItem('arona_api',JSON.stringify({url:GH,alt:'',key:args[1],model:gm,proxy:''}));
-      pr('已接入 GitHub Models（'+gm+'）','ok');
-      pr('令牌需在 github.com → Developer settings 生成，Fine-grained 需勾选 Models: Read','muted');
-      pr('⚠ 该域名国内常被拦截，若测试失败请改用：ai ca <ChatAnywhere密钥>','muted');
-      return;
-    }
-    if(sub==='set'){
-      if(args.length<4){ pr('ai set: 用法 ai set <接口地址> <密钥> <模型名>','err'); return; }
-      var url=args[1].replace(/\/+$/,''), key=args[2], model=args[3];
-      if(!/^https?:\/\//.test(url)){ pr('接口地址需以 http(s):// 开头','err'); return; }
-      localStorage.setItem('arona_api',JSON.stringify({url:url,alt:'',key:key,model:model,proxy:''}));
-      pr('已配置模型接口：'+url+'（'+model+'）','ok');
-      return;
-    }
-    if(sub==='clear'){ localStorage.removeItem('arona_api'); pr('已清除接口配置，阿洛娜暂无法回应，请重新配置','ok'); return; }
-    if(sub==='test'){
-      var cfg=readApi();
-      if(!cfg||!cfg.url){ pr('尚未配置接口，请先：ai ca <密钥> 或 ai set <地址> <密钥> <模型名>','err'); return; }
-      var hs=[]; hs.push(cfg.url); if(cfg.alt&&hs.indexOf(cfg.alt)<0) hs.push(cfg.alt);
-      (function tryOne(i){
-        if(i>=hs.length){ pr('所有线路均连接失败','err'); return; }
-        pr('正在测试 '+hs[i]+' …'+(i?'（备用线路）':''),'muted');
-        fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({url:hs[i],key:cfg.key,model:cfg.model,proxy:cfg.proxy||'',messages:[{role:'user',content:'你好'}],max_tokens:32,stream:false})})
-          .then(function(res){ return res.text().then(function(t){ return {ok:res.ok,status:res.status,t:t}; }); })
-          .then(function(r){
-            if(!r.ok){
-              if(i<hs.length-1){ pr('主线路返回 HTTP '+r.status+'，自动切换备用线路 …','muted'); tryOne(i+1); return; }
-              pr('接口返回 HTTP '+r.status+'：'+r.t.slice(0,300),'err'); return;
-            }
-            var txt='';
-            try{ var j=JSON.parse(r.t); txt=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||r.t.slice(0,200); }
-            catch(e){ txt=r.t.slice(0,200); }
-            pr('连接成功！阿洛娜回复：'+txt,'ok');
-          })
-          .catch(function(e){
-            if(i<hs.length-1){ pr('主线路连接失败（'+e.message+'），自动切换备用线路 …','muted'); tryOne(i+1); return; }
-            pr('连接失败：'+e.message+'（请检查网络与地址）','err');
-          });
-      })(0);
-      return;
-    }
-    pr('ai: 未知子命令（可用 panel/ca/github/set/clear/test/status）','err');
-  }
-
-  /* ---------- 递归遍历（带深度/数量限制，避免遍历整台设备卡死） ---------- */
-  function walk(p, depth, maxDepth, counter, cb){
-    if(depth>maxDepth || counter.n>counter.limit) return;
-    var j=jget(fs().ls(p)); if(!j.ok) return;
-    var it=(j.items||[]);
-    for(var i=0;i<it.length;i++){ var x=it[i]; var fp=(p?p+'/':'')+x.n; counter.n++;
-      cb(x, fp, depth);
-      if(x.t==='dir' && depth<maxDepth && counter.n<counter.limit) walk(fp, depth+1, maxDepth, counter, cb); }
-  }
-  function cmdTree(args){
-    var maxD=3, i=0;
-    if(args[0]==='-L'){ maxD=parseInt(args[1],10)||3; i=2; }
-    var p=resolve(args[i]||'');
-    pr((p?'/'+p:'~（手机存储根）'),'dir');
-    var c={n:0,limit:1200};
-    walk(p,0,maxD,c,function(x,fp,depth){
-      var pad=new Array(depth+1).join('  ');
-      pr(pad+'├─ '+(x.t==='dir'?x.n+'/':x.n), x.t==='dir'?'dir':'ok');
-    });
-    pr('（深度 '+maxD+' 层，条目上限 1200，超出自动截断）','muted');
-  }
-  function cmdFind(args){
-    if(!args.length){ pr('find: 缺少文件名','err'); return; }
-    var name=args[0].toLowerCase(), p=resolve(args[1]||'');
-    var c={n:0,limit:1500}, hit=0;
-    walk(p,0,6,c,function(x,fp){ if(x.n.toLowerCase().indexOf(name)>=0){ pr('/'+fp); hit++; } });
-    pr('匹配 '+hit+' 项','muted');
-  }
-  function cmdDu(args){
-    var p=resolve(args[0]||''), tot=0; var c={n:0,limit:1500};
-    walk(p,0,6,c,function(x,fp,depth){ if(x.t==='file') tot+=x.s; });
-    var s=tot, u='B';
-    if(s>1024*1024){ s=(s/1024/1024).toFixed(1); u='MB'; }
-    else if(s>1024){ s=(s/1024).toFixed(1); u='KB'; }
-    pr('/'+p+'  共 '+s+' '+u,'ok');
-  }
-  function cmdGrep(args){
-    if(args.length<2){ pr('grep: 用法 grep <模式> <文件>','err'); return; }
-    var pat=args[0], j=jget(fs().read(resolve(args[1]))); if(!j.ok){ pr('grep: '+j.msg,'err'); return; }
-    var lines=j.text.split('\n'), cnt=0;
-    for(var i=0;i<lines.length;i++){ if(lines[i].indexOf(pat)>=0){ pr((i+1)+': '+lines[i]); cnt++; } }
-    pr('匹配 '+cnt+' 行','muted');
-  }
-  function cmdHeadTail(args, head){
-    var n=10, i=0;
-    if(args[0]==='-n'){ n=parseInt(args[1],10)||10; i=2; }
-    var j=jget(fs().read(resolve(args[i]||''))); if(!j.ok){ pr((head?'head':'tail')+': '+j.msg,'err'); return; }
-    var lines=j.text.split('\n'); if(head) lines=lines.slice(0,n); else lines=lines.slice(-n);
-    for(var k=0;k<lines.length;k++) pr(lines[k]);
-  }
-  function cmdWc(args){
-    if(!args.length){ pr('wc: 缺少文件','err'); return; }
-    var j=jget(fs().read(resolve(args[0]))); if(!j.ok){ pr('wc: '+j.msg,'err'); return; }
-    var t=j.text, lines=t.split('\n').length, words=t.split(/\s+/).filter(function(s){return s;}).length;
-    pr(lines+' 行  '+words+' 词  '+t.length+' 字节');
-  }
-  function cmdRename(args){
-    if(args.length<2){ pr('rename: 用法 rename <旧> <新>','err'); return; }
-    var j=jget(fs().mv(resolve(args[0]),resolve(args[1]))); if(!j.ok) pr('rename: '+j.msg,'err'); else pr('已重命名','ok');
-  }
-  function cmdNeofetch(){
-    var v='1.0'; if(fs()){ var j=jget(fs().info()); if(j.ok) v=j.version; }
-    pr('      ◈ 什厅之匣','ok');
-    pr('    ────────────────','muted');
-    pr('    应用  什厅之匣服务 v'+v);
-    pr('    系统  Android (Schale Terminal)');
-    pr('    地图  '+(window.SC?SC.mapName():'—'));
-    pr('    学生  '+(window.SC?SC.groupsHere().length:'?')+' 名在场');
-    pr('    存储  手机内部存储（可申请所有文件访问）');
-  }
-
-  /* ---------- 内置 Linux 环境（proot + Ubuntu，实验性，仅 arm64） ---------- */
-  var linuxBusy=false, linuxReady=false;
+  /* ---------- Linux 环境（proot + Ubuntu，实验性，仅 arm64） ---------- */
+  var linuxBusy=false, linuxReady=false, linuxQueue=[];
   function linuxStatusSync(){
     try{ return JSON.parse((window.Android&&window.Android.linuxStatus())||'{}'); }catch(e){ return {}; }
   }
-  /* 解析 SSE 流：每行 data: {...}，回调每个事件对象 */
   function sse(url, body, onEvent){
     return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})
       .then(function(res){
@@ -778,17 +520,30 @@ imgEl.addEventListener('load',function(){ resetView(true); });
         return pump();
       });
   }
-  function apiLinuxInit(cb){
-    if(linuxBusy){ pr('正在初始化中，请稍候…','muted'); return; }
-    linuxBusy=true;
-    pr('开始初始化 Linux 环境（首次需解压约 27MB，请稍候）…','muted');
-    sse('/api/linux/init',{},function(ev){
-      if(ev.type==='progress'){ pr('  '+ev.text+' ('+ev.percent+'%)','muted'); }
-      else if(ev.type==='done'){ linuxReady=true; linuxBusy=false; pr('✓ '+ev.text,'ok'); if(cb) cb(); }
-      else if(ev.type==='fail'){ linuxBusy=false; pr('✗ '+ev.text,'err'); }
-    }).catch(function(e){ linuxBusy=false; pr('初始化请求失败：'+e.message,'err'); });
+  function flushQueue(){
+    if(!linuxQueue.length) return;
+    var q=linuxQueue.slice(); linuxQueue=[];
+    for(var i=0;i<q.length;i++) apiLinuxExec(q[i]);
   }
-  /* 在一个新的 proot bash 里执行命令，流式输出 */
+  function apiLinuxInit(cb){
+    if(linuxReady){ if(cb) cb(); return; }
+    if(linuxBusy) return;
+    linuxBusy=true;
+    pr('正在启动 Linux 环境（首次需解压约 27MB，1–2 分钟）…','muted');
+    sse('/api/linux/init',{},function(ev){
+      if(ev.type==='progress'){ pr('  '+ev.text+(ev.percent>=0?(' ('+ev.percent+'%)'):''),'muted'); }
+      else if(ev.type==='done'){
+        linuxReady=true; linuxBusy=false; setPrompt();
+        pr('✓ '+ev.text,'ok');
+        pr('已进入 Linux bash（root）。直接输入命令，如 apt update、ls /etc。','muted');
+        apiLinuxExec(':');   /* 空命令：拉取 bash 真实 PS1，刷新提示符 */
+        if(cb) cb();
+        flushQueue();
+      }
+      else if(ev.type==='fail'){ linuxBusy=false; pr('✗ '+ev.text,'err'); }
+    }).catch(function(e){ linuxBusy=false; pr('启动失败：'+e.message,'err'); });
+  }
+  /* 在 proot bash 里执行命令，流式输出 */
   function apiLinuxExec(command, done){
     var lineBuf='';
     function flushLine(){ if(lineBuf){ pr(lineBuf.replace(/\n$/,'')); lineBuf=''; } }
@@ -797,114 +552,44 @@ imgEl.addEventListener('load',function(){ resetView(true); });
         lineBuf+=ev.text||'';
         var nl;
         while((nl=lineBuf.indexOf('\n'))>=0){ pr(lineBuf.slice(0,nl)); lineBuf=lineBuf.slice(nl+1); }
+      } else if(ev.type==='prompt'){
+        if(ev.text){ curPrompt=ev.text; setPrompt(); }
       } else if(ev.type==='done'){
         flushLine(); if(ev.code!==0) pr('[退出码 '+ev.code+']','muted');
         if(done) done(ev.code);
       }
     }).catch(function(e){ flushLine(); pr('执行失败：'+e.message,'err'); if(done) done(-1); });
   }
-  function cmdLinux(args){
-    var sub=(args[0]||'status').toLowerCase();
-    var st=linuxStatusSync(); linuxReady=!!st.ready;
-    if(sub==='status'||sub==='info'){
-      pr('内置 Linux 环境（实验性 · 仅 arm64）','muted');
-      pr('  架构   '+(st.arch||'—')+(st.supported?' ✓':' ✗'));
-      pr('  状态   '+(st.ready?'已就绪':(st.initializing?'初始化中':'未初始化')));
-      if(st.error) pr('  错误   '+st.error,'err');
-      pr('  根fs   '+(st.rootfsPath||'—'));
-      pr('用法：linux init 初始化 · linux shell 进入 bash · apt 安装软件','muted');
-      return;
+
+  function ensureLinuxThen(cb){
+    var st=linuxStatusSync();
+    if(st.ready){ linuxReady=true; setPrompt(); cb(); return; }
+    if(st.initializing || linuxBusy){ linuxQueue.push(cb); return; }
+    if(st.supported===false){
+      pr('此设备不支持内置 Linux（需 arm64-v8a）。','err'); return;
     }
-    if(sub==='init'){ apiLinuxInit(); return; }
-    if(sub==='shell'||sub==='bash'||sub==='sh'){
-      if(!st.ready){ pr('环境未就绪，先执行：linux init','err'); return; }
-      pr('进入 Linux bash（输入 exit 返回；apt install 可安装软件）','muted');
-      return;
-    }
-    pr('linux: 未知子命令（status/init/shell）','err');
-  }
-  /* 判断是否应交给真实 Linux shell */
-  function isLinuxCommand(cmd){
-    return cmd==='apt'||cmd==='apt-get'||cmd==='dpkg'||cmd==='sh'||cmd==='bash'||
-           cmd==='uname'||cmd==='lsb_release'||cmd==='sudo'||cmd==='su'||
-           cmd==='wget'||cmd==='curl'||cmd==='python3'||cmd==='python'||cmd==='pip3'||
-           cmd==='git'||cmd==='gcc'||cmd==='make'||cmd==='ps'||cmd==='top';
+    apiLinuxInit(function(){ cb(); });
   }
   function runLinuxLine(line){
-    var st=linuxStatusSync();
-    if(!st.ready){
-      pr('Linux 环境尚未就绪。','err');
-      pr('先执行 linux init 初始化（首次约需 1-2 分钟）。','muted');
-      return;
-    }
-    apiLinuxExec(line);
+    if(!line) return;
+    ensureLinuxThen(function(){ apiLinuxExec(line); });
   }
 
   function run(line){
     line=line.trim(); if(!line){ return; }
-    /* `!` 前缀：强制交给内置 Linux shell（用于 ls/cat 等同名内建命令的 GNU 版本）*/
-    if(line.charAt(0)==='!'){
-      var lcmd=line.slice(1).trim();
-      logTerm(prompt()+line); pr(prompt()+line,'cmd'); hist.push(line); hi=hist.length;
-      if(lcmd) runLinuxLine(lcmd);
+    logTerm(prompt()+line); pr(prompt()+line,'cmd'); hist.push(line); hi=hist.length;
+    if(line==='clear'){ out.innerHTML=''; clearTermLog(); return; }
+    if(line==='help'){
+      pr('什厅之匣 · Linux 终端','muted');
+      pr('进入即自动启用内置 Linux（proot + Ubuntu 22.04，arm64）。');
+      pr('提示符严格遵循系统 bash：用户@主机:路径# （root 为 #，cd 会改变路径）。','muted');
+      pr('直接输入任意 Linux 命令：apt update / apt install <包> / ls /etc / uname -a …');
+      pr('clear           清屏');
+      pr('help            本帮助');
+      pr('退出/重启后历史保留；桌面终端小组件可直接执行命令。','muted');
       return;
     }
-    logTerm(prompt()+line);            /* 命令本身进历史 */
-    pr(prompt()+line,'cmd'); hist.push(line); hi=hist.length;
-    var gi=line.indexOf('>>'), si=line.indexOf('>'), redir=null, append=false, code=line;
-    if(gi>=0){ redir=line.slice(gi+2).trim(); append=true; code=line.slice(0,gi); }
-    else if(si>=0){ redir=line.slice(si+1).trim(); append=false; code=line.slice(0,si); }
-    var toks=tokenize(code); if(!toks.length) return;
-    var cmd=toks[0], args=toks.slice(1), r, j;
-    switch(cmd){
-      case 'help': cmdHelp(); break;
-      case 'clear': out.innerHTML=''; clearTermLog(); break;
-      case 'pwd': pr('/'+root); break;
-      case 'whoami': pr('sensei'); break;
-      case 'date': pr(new Date().toString()); break;
-      case 'echo': { var txt=args.join(' ');
-        if(redir){ var w=fs().write(resolve(redir), append?(readForAppend(resolve(redir))+txt+'\n'):(txt+'\n'));
-          j=jget(w); if(!j.ok) pr('echo: '+j.msg,'err'); }
-        else pr(txt); break; }
-      case 'ls': cmdLs(args); break;
-      case 'cd': cmdCd(args); break;
-      case 'cat': cmdCat(args); break;
-      case 'mkdir': cmdSimple('mkdir',args,function(a){return fs().mkdir(resolve(a));}); break;
-      case 'touch': cmdSimple('touch',args,function(a){return fs().touch(resolve(a));}); break;
-      case 'rm': { var rec=false; if(args[0]==='-r'||args[0]==='-rf'||args[0]==='-fr'){ rec=true; args=args.slice(1); }
-        if(!args.length){ pr('rm: 缺少参数','err'); break; }
-        j=jget(fs().rm(resolve(args[0]),rec)); if(!j.ok) pr('rm: '+j.msg,'err'); else pr('已删除 '+args[0],'ok'); break; }
-      case 'mv': case 'cp': {
-        if(args.length<2){ pr(cmd+': 缺少参数','err'); break; }
-        j=jget(fs()[cmd](resolve(args[0]),resolve(args[1]))); if(!j.ok) pr(cmd+': '+j.msg,'err'); else pr(cmd+' 完成','ok'); break; }
-      case 'version': cmdVersion(); break;
-      case 'map': pr('当前地图：'+(window.SC?SC.mapName():'—')); break;
-      case 'students': cmdStudents(args); break;
-      case 'grant': { if(window.Android) window.Android.requestAllFilesPermission();
-        pr('已请求「所有文件访问」权限，请在系统设置中授予（仅 Android 11+ 需要）','ok'); break; }
-      case 'ai': cmdAi(args); break;
-      case 'about': { var a=$('about'); a.classList.remove('hidden'); a.style.display='flex'; break; }
-      case 'momotalk': { var j=fs()?jget(fs().launch('bluearchive')):null;
-        if(!j||!j.ok) pr('momotalk: '+(j?j.msg:'未就绪')+'（设备上需已安装蔚蓝档案）','err');
-        else pr('正在打开：'+j.pkg,'ok'); break; }
-      case 'open': { if(!args.length){ pr('open: 缺少包名','err'); break; }
-        var o=fs()?jget(fs().launch(args[0])):null;
-        if(!o||!o.ok) pr('open: '+(o?o.msg:'未就绪'),'err'); else pr('正在打开：'+o.pkg,'ok'); break; }
-      case 'tree': cmdTree(args); break;
-      case 'find': cmdFind(args); break;
-      case 'du': cmdDu(args); break;
-      case 'grep': cmdGrep(args); break;
-      case 'head': cmdHeadTail(args,true); break;
-      case 'tail': cmdHeadTail(args,false); break;
-      case 'wc': cmdWc(args); break;
-      case 'rename': cmdRename(args); break;
-      case 'neofetch': cmdNeofetch(); break;
-      case 'linux': cmdLinux(args); break;
-      default:
-        /* 统一终端：内置命令未匹配的，全部交给内置 Linux shell 执行。
-           这样 apt / 系统命令 / 未知程序都走真实 proot 环境。 */
-        runLinuxLine(line);
-    }
+    runLinuxLine(line);
   }
 
   inp.addEventListener('keydown',function(e){
@@ -914,29 +599,28 @@ imgEl.addEventListener('load',function(){ resetView(true); });
   });
   var termEl=$('terminal');
   $('termClose').addEventListener('click',function(){ termEl.classList.add('hidden'); termEl.style.display='none'; if(window.Android) window.Android.setModal(false); });
+
+  var autoStarted=false;
   window.__openTerm=function(){
-    termEl.classList.remove('hidden'); termEl.style.display='flex'; setRoot('');
+    termEl.classList.remove('hidden'); termEl.style.display='flex';
     if(window.Android) window.Android.setModal(true);
     setTimeout(function(){
-      inp.focus();
-      /* 首次打开提示 Linux 环境状态（不打断历史输出） */
-      if(!window.__linuxGreeted){
-        window.__linuxGreeted=true;
+      inp.focus(); setPrompt();
+      /* 进入即自动启用 Linux */
+      if(!autoStarted){
+        autoStarted=true;
+        if(restoreTerm()===0) pr('什厅之匣 · Linux 终端，正在启动环境…','muted');
         var st=linuxStatusSync();
-        if(st.supported && !st.ready){
-          pr('检测到内置 Linux 环境（实验性）。输入 linux init 初始化后可 apt 装软件。','muted');
-        }
+        if(st.ready){ linuxReady=true; setPrompt(); pr('Linux 已就绪，直接输入命令。','muted'); apiLinuxExec(':'); }
+        else if(st.supported===false){ pr('此设备不支持内置 Linux（需 arm64-v8a）。','err'); }
+        else { ensureLinuxThen(function(){ /* 就绪提示在 init 回调里 */ }); }
+      } else {
+        restoreTerm();
       }
     },50);
   };
   /* 桌面小组件「终端」快捷命令入口 */
   window.__termRun=function(c){ run(String(c||'')); };
-  /* 打开应用时恢复历史输出；只有第一次使用才写欢迎信息 */
-  if(restoreTerm()===0){
-    pr('欢迎使用什厅之匣服务终端。输入 help 查看命令。','muted');
-    var r=fs()?(jget(fs().info()).root||'手机存储根'):'手机存储根';
-    pr('文件根目录：'+r+'（手机内部存储根，可输入 grant 申请所有文件访问权限）','muted');
-  }
 })();
 
 /* ===== 阿洛娜 AI（外部模型接口：OpenAI 兼容 / GitHub Models，经 App 内置本地代理转发） ===== */

@@ -57,9 +57,11 @@ public class HttpServer implements Runnable {
     private int port = -1;
     private volatile boolean running = true;
     private final Context ctx;
+    private final LinuxEnv linux;
 
     public HttpServer(MainActivity act, Context c) {
         this.ctx = c;
+        this.linux = act != null ? act.linuxEnv() : null;
     }
 
     public int getPort() {
@@ -164,6 +166,18 @@ public class HttpServer implements Runnable {
                 apiChat(sock, body);
                 return;
             }
+            if ("/api/linux/status".equals(path)) {
+                sendJson(sock, linux == null ? "{\"ready\":false,\"error\":\"无环境实例\"}" : linux.status());
+                return;
+            }
+            if ("/api/linux/init".equals(path)) {
+                apiLinuxInit(sock);
+                return;
+            }
+            if ("/api/linux/exec".equals(path) && body != null) {
+                apiLinuxExec(sock, body);
+                return;
+            }
             serveAsset(sock, path, rangeStart, rangeEnd);
         } catch (Exception e) {
             try { sock.close(); } catch (Exception ignored) { }
@@ -184,6 +198,120 @@ public class HttpServer implements Runnable {
         }
         if (c == -1 && bo.size() == 0) return null;
         return new String(bo.toByteArray(), "UTF-8");
+    }
+
+    /* ============================ 内置 Linux 环境 ============================ */
+
+    private void sendJson(Socket sock, String json) {
+        try {
+            byte[] b = json.getBytes("UTF-8");
+            StringBuilder h = new StringBuilder();
+            h.append("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n");
+            h.append("Content-Length: ").append(b.length).append("\r\n");
+            h.append("Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+            OutputStream out = sock.getOutputStream();
+            out.write(h.toString().getBytes("UTF-8"));
+            out.write(b);
+            out.flush();
+            sock.close();
+        } catch (Exception e) {
+            try { sock.close(); } catch (Exception ignored) { }
+        }
+    }
+
+    /** 初始化环境：SSE 推送进度，结束时发一条 __done 事件。 */
+    private void apiLinuxInit(final Socket sock) {
+        try {
+            writeSseHeaders(sock);
+            final OutputStream out = sock.getOutputStream();
+            if (linux == null) {
+                sseLine(out, "data: " + JSONObject.quote("{\"type\":\"fail\",\"text\":\"无环境实例\"}") + "\n\n");
+                out.flush(); sock.close(); return;
+            }
+            if (linux.isReady()) {
+                sseLine(out, "data: " + JSONObject.quote("{\"type\":\"done\",\"text\":\"已就绪\"}") + "\n\n");
+                out.flush(); sock.close(); return;
+            }
+            linux.init(new LinuxEnv.Progress() {
+                @Override public void onProgress(String text, int percent) {
+                    try {
+                        JSONObject o = new JSONObject();
+                        o.put("type", percent >= 100 ? "done" : "progress");
+                        o.put("text", text == null ? "" : text);
+                        o.put("percent", percent);
+                        sseLine(out, "data: " + o.toString() + "\n\n");
+                        out.flush();
+                    } catch (Exception ignored) { }
+                }
+                @Override public void onFail(String reason) {
+                    try {
+                        JSONObject o = new JSONObject();
+                        o.put("type", "fail");
+                        o.put("text", reason == null ? "初始化失败" : reason);
+                        sseLine(out, "data: " + o.toString() + "\n\n");
+                        out.flush();
+                    } catch (Exception ignored) { }
+                }
+            });
+            // init 是异步的，SSE 通道需保持打开直到收到 done/fail。
+            // 由于回调里已发 done/fail，这里延迟关闭，给浏览器时间接收。
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    try { Thread.sleep(1500); } catch (Exception ignored) { }
+                    try { out.flush(); sock.close(); } catch (Exception ignored) { }
+                }
+            }).start();
+        } catch (Exception e) {
+            try { sock.close(); } catch (Exception ignored) { }
+        }
+    }
+
+    /** 执行命令：SSE 推送每行输出 + 最终退出码。 */
+    private void apiLinuxExec(final Socket sock, String body) {
+        try {
+            JSONObject req = new JSONObject(body);
+            String cmd = req.optString("cmd", "");
+            writeSseHeaders(sock);
+            final OutputStream out = sock.getOutputStream();
+            if (linux == null || !linux.isReady()) {
+                JSONObject o = new JSONObject();
+                o.put("type", "line");
+                o.put("text", "[错误] Linux 环境未就绪，请先初始化\n");
+                sseLine(out, "data: " + o.toString() + "\n\n");
+                out.flush(); sock.close(); return;
+            }
+            final int code = linux.exec(cmd, new LinuxEnv.ExecCb() {
+                @Override public void onLine(String line) {
+                    try {
+                        JSONObject o = new JSONObject();
+                        o.put("type", "line");
+                        o.put("text", line);
+                        sseLine(out, "data: " + o.toString() + "\n\n");
+                        out.flush();
+                    } catch (Exception ignored) { }
+                }
+            });
+            JSONObject done = new JSONObject();
+            done.put("type", "done");
+            done.put("code", code);
+            sseLine(out, "data: " + done.toString() + "\n\n");
+            out.flush();
+            sock.close();
+        } catch (Exception e) {
+            try { sock.close(); } catch (Exception ignored) { }
+        }
+    }
+
+    private void writeSseHeaders(Socket sock) throws Exception {
+        String h = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n" +
+                "Cache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n" +
+                "Connection: close\r\n\r\n";
+        sock.getOutputStream().write(h.getBytes("UTF-8"));
+        sock.getOutputStream().flush();
+    }
+
+    private static void sseLine(OutputStream out, String s) throws Exception {
+        out.write(s.getBytes("UTF-8"));
     }
 
     /* ============================ AI 代理 ============================ */

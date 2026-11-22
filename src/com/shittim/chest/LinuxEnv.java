@@ -132,6 +132,75 @@ public final class LinuxEnv {
     }
 
     /**
+     * 真正执行一次 ELF 来判断能否运行，而非只看 stat 执行位。
+     * 某些设备把应用目录挂载为 noexec：chmod 后 stat 有执行位，但 execve 仍返回 EACCES。
+     * mode:
+     *   "files"  —— 直接 execve(files/bin/proot)
+     *   "native" —— 直接 execve(nativeLibraryDir/libproot.so)
+     *   "linker" —— execve(/system/bin/linker64, libproot.so)（系统分区可执行，绕过 noexec）
+     * 返回 true 表示该模式可真正启动 proot（--version 正常输出）。
+     */
+    private boolean probeExec(String mode) {
+        Process p = null;
+        try {
+            File proot;
+            List<String> cmd = new ArrayList<String>();
+            if ("linker".equals(mode)) {
+                proot = new File(nativeLibDir, LIB_PROOT);
+                cmd.add("/system/bin/linker64");
+            } else if ("native".equals(mode)) {
+                proot = new File(nativeLibDir, LIB_PROOT);
+            } else {
+                proot = new File(binDir, "proot");
+            }
+            if (!proot.exists()) return false;
+            cmd.add(proot.getAbsolutePath());
+            cmd.add("--version");
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            Map<String, String> env = pb.environment();
+            env.put("LD_LIBRARY_PATH", libDir.getAbsolutePath() + ":" + nativeLibDir.getAbsolutePath());
+            env.put("PROOT_LOADER", new File(binDir, "loader").getAbsolutePath());
+            pb.redirectErrorStream(true);
+            p = pb.start();
+            BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) {
+                sb.append(line).append('\n');
+                if (sb.length() > 4096) break;
+            }
+            int rc = p.waitFor();
+            String out = sb.toString();
+            // --version 成功时输出形如 "proot 5.x.x"，且退出码 0
+            return rc == 0 && (out.contains("proot") || out.contains("Proot"));
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            if (p != null) try { p.destroy(); } catch (Exception ignored) { }
+        }
+    }
+
+    /**
+     * 按当前 execMode 构造 proot 启动命令前缀（可执行文件 + 可能的 linker64）。
+     * 返回 null 表示模式未知。
+     */
+    private List<String> buildLaunch() {
+        List<String> cmd = new ArrayList<String>();
+        if ("linker".equals(execMode)) {
+            if (!new File("/system/bin/linker64").exists()) return null;
+            cmd.add("/system/bin/linker64");
+            cmd.add(new File(nativeLibDir, LIB_PROOT).getAbsolutePath());
+        } else if ("native".equals(execMode)) {
+            cmd.add(new File(nativeLibDir, LIB_PROOT).getAbsolutePath());
+        } else if ("files".equals(execMode)) {
+            cmd.add(new File(binDir, "proot").getAbsolutePath());
+        } else {
+            return null;
+        }
+        return cmd;
+    }
+
+    /**
      * 初始化环境（幂等）。若已 ready 直接返回；否则在后台线程解压。
      * 通过回调把进度文本送回 UI。
      */
@@ -165,26 +234,36 @@ public final class LinuxEnv {
                         extractTarGz("linux/ubuntu-base-arm64.tar.gz", rootfs, cb);
                     }
 
-                    if (cb != null) cb.onProgress("校验执行权限…", 85);
+                    if (cb != null) cb.onProgress("校验执行权限（真实探测）…", 85);
                     File prootF = new File(binDir, "proot");
                     File loaderF = new File(binDir, "loader");
-                    binExecOk = forceExec(prootF) && forceExec(loaderF);
+                    forceExec(prootF); forceExec(loaderF);
 
-                    if (!binExecOk) {
-                        /* 应用私有目录禁止执行 —— 改用系统保证可执行的 nativeLibraryDir */
+                    /* 关键：stat 执行位不可靠（noexec 挂载下 chmod 成功仍无法 execve）。
+                     * 用真实执行 proot --version 逐级探测，选第一个真正可用的模式。 */
+                    String chosen = null;
+                    if (probeExec("files")) {
+                        chosen = "files";
+                    } else {
+                        if (cb != null) cb.onProgress("私有目录不可执行，尝试系统库目录…", 86);
                         File np = new File(nativeLibDir, LIB_PROOT);
                         File nl = new File(nativeLibDir, LIB_LOADER);
-                        if (!np.exists() || !nl.exists()) {
-                            throw new Exception("应用私有目录禁止执行，且内置可执行文件缺失，无法启动 Linux 环境");
-                        }
-                        if (!canExec(np) || !canExec(nl)) {
+                        if (np.exists() && nl.exists()) {
                             forceExec(np); forceExec(nl);
+                            setupLibLinks();
+                            if (probeExec("native")) {
+                                chosen = "native";
+                            } else if (probeExec("linker")) {
+                                chosen = "linker";
+                            }
                         }
-                        setupLibLinks();
-                        execMode = "nativeLib";
-                    } else {
-                        execMode = "files";
                     }
+                    if (chosen == null) {
+                        throw new Exception("应用无法执行内置 proot（私有目录被 noexec 限制，且系统库目录兜底不可用）。" +
+                                "该设备的系统策略禁止应用内执行代码，内置 Linux 环境无法启用。");
+                    }
+                    execMode = chosen;
+                    binExecOk = "files".equals(chosen);
 
                     if (cb != null) cb.onProgress("配置 apt 源与 DNS…", 88);
                     writeAptSources();
@@ -378,16 +457,23 @@ public final class LinuxEnv {
             if (cb != null) cb.onLine("[错误] Linux 环境未就绪：" + (lastError == null ? "请等待初始化" : lastError) + "\n");
             return -1;
         }
-        /* 执行前自愈：每次都重新校验/修复执行位，应对升级或重启后权限丢失 */
+        /* 执行前自愈：重新修复 files 目录执行位（对 noexec 无效但无害），并校验当前模式仍可用 */
         forceExec(new File(binDir, "proot"));
         forceExec(new File(binDir, "loader"));
 
-        final File proot = binExecOk ? new File(binDir, "proot") : new File(nativeLibDir, LIB_PROOT);
-        final File loader = binExecOk ? new File(binDir, "loader") : new File(nativeLibDir, LIB_LOADER);
+        // 按探测到的实际可用模式构造启动命令（files / native / linker64）
+        List<String> launch = buildLaunch();
+        if (launch == null) {
+            if (cb != null) cb.onLine("[错误] 执行模式未就绪，请重新执行 linux init\n");
+            return -1;
+        }
+        // loader 必须是 proot 能 execve 的那一份：files 模式用 bin 目录，其余用 nativeLibraryDir
+        final File loader = "files".equals(execMode)
+                ? new File(binDir, "loader")
+                : new File(nativeLibDir, LIB_LOADER);
 
         final long id = ++seq;
-        List<String> cmd = new ArrayList<String>();
-        cmd.add(proot.getAbsolutePath());
+        List<String> cmd = new ArrayList<String>(launch);
         cmd.add("-r"); cmd.add(rootfs.getAbsolutePath());
         cmd.add("-0");                       // 伪装 root（apt 需要）
         cmd.add("-b"); cmd.add("/dev");
@@ -449,8 +535,9 @@ public final class LinuxEnv {
             String m = t.getMessage() == null ? t.toString() : t.getMessage();
             String hint = "";
             if (m.contains("Permission denied") || m.contains("error=13")) {
-                hint = "（执行权限被拒绝：已尝试强制 chmod 与系统目录兜底，" +
-                       "该设备可能限制了应用内代码执行；请升级后重试 linux init）";
+                hint = "（执行权限被拒绝，当前模式=" + execMode +
+                       "：已用真实执行探测并尝试 files/系统库目录/linker64 全部模式，" +
+                       "该设备系统策略可能禁止应用内执行代码；请把完整报错反馈开发者）";
             }
             if (cb != null) cb.onLine("[错误] 无法启动 proot：" + m + hint + "\n");
             return -1;
